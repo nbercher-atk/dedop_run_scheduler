@@ -308,7 +308,7 @@ done
 # Continue to monitor the remaining running =dedop run= commands:
 while (( $(dedop_nb_running_instances) > 0 )); do
     watch_date="$(date +"%Y-%m-%dT%H.%M.%S")"
-    echo " + ${watch_date}: $(dedop_nb_running_instances) jobs are running: no more file(s) to be awainting.  Waiting for remaining jobs to terminate." 1>&2
+    echo " + ${watch_date}: $(dedop_nb_running_instances) jobs are running: no more file(s) to process, waiting for remaining jobs to terminate." 1>&2
     sleep ${SLEEP_WATCH}
 done
 
