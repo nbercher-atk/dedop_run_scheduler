@@ -299,7 +299,7 @@ dedop_inputs_list | while read ncfile; do
             let nc_file_num+=1
             break
         else
-            printf " + ncfile %03d/%03d is awaiting for a freed logical CPU...\n   (${cur_nb_dedop_instances} jobs are running, no more free jobs to be allocated: waiting jobs to terminate)\n" ${nc_file_num} ${nb_files} 1>&2
+            printf " + ncfile %03d/%03d: ${cur_nb_dedop_instances} jobs are running, waiting for a free logical CPU.\n" ${nc_file_num} ${nb_files} 1>&2
             sleep ${SLEEP_JOBS}
         fi
     done
