@@ -1,0 +1,325 @@
+# libdedop - Bash library for ESA's DeDop Delay Doppler Processor.
+# 
+# Usage :
+#     source libdedop
+# 
+# Notes: Some of the functions in this library do the same than dedop
+#        commands, however, they are usually faster since here they
+#        access config files directly instead of relying on dedop to
+#        do so (which in turn runs Python, load modules, etc. and is
+#        slower than cat).
+# 
+# Depends on : cat, echo, false, ls, pgrep, ps, sed, kill.
+# 
+# See also : dedop_run_scheduler, dedop
+# 
+# History : 
+#  - 2017-10-11: initial version.
+# 
+# Nicolas Bercher, 2017-10-11.
+# nbercher@along-track.com
+# 
+# This script is distributed under the terms of the GPL v2 license.
+# 
+
+
+# Requires echo.dbg:
+source _bash
+if [ -z "${DEBUG}" ]; then
+    DEBUG=/bin/false
+fi
+
+
+## About DeDop home dir:
+# 
+# Typical ~/.dedop/ direcotry structure:
+# 
+# └── workspaces
+#     └── aca-ddp_wp6400_amazon_case_study
+#         ├── configs
+#         │   └── ddp_conf_01
+#         │       └── outputs
+#         └── inputs
+# 
+
+
+## Nasty hardcoded things:
+# TODO:2017-10-11: hardcoded value!  This is OK until we do process
+# something else than CryoSat-2 data:
+CS2_PATTERN='CS_*.DBL.nc'
+JOBS_DURATION_MAX=900 # in seconds (900sec = 15min)
+
+
+## PATHS:
+# Path to the DeDop home dir, in which we can find valid files tree
+# (e.g., containing workspaces/, config.py):
+DEDOP_HOME=~/.dedop
+
+
+#
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_workspace_current() {
+    cat ${DEDOP_HOME}/workspaces/.current
+}
+export -f dedop_workspace_current
+
+
+#
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_config_current() {
+    if (( $# > 0 )); then
+        workspace_name="${1}"
+    else
+        workspace_name="$(dedop_workspace_current)"
+    fi
+    cat ${DEDOP_HOME}/workspaces/"${workspace_name}"/configs/.current
+}
+export -f dedop_config_current
+
+
+#
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_workspace_path() {
+    if (( $# > 0 )); then
+        workspace_name="${1}"
+    else
+        workspace_name="$(dedop_workspace_current)"
+    fi
+    echo ${DEDOP_HOME}/workspaces/"${workspace_name}"
+}
+export -f dedop_workspace_path
+
+
+# Get the path to the a given [workspace/]config setting.
+# 
+# Usage:
+# 
+#   dedop_config_path # get the path to the current config current
+#                     # (from the current workspace)
+# 
+#   dedop_config_path <config_name> # get the path to the <config_name> (from the 
+#                                   # current workspace)
+# 
+#   dedop_config_path <workspace_name> <config_name> # get the path to the <config_name>
+#                                                    # from the <workspace_name>
+# 
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_config_path() {
+    # TODO:2017-10-12: see if we can just use this in place of the
+    # case/esac block:
+    # 
+    # if (( $# == 2 )); then
+    #     workspace_name="${1}"
+    #     shift
+    # fi
+    # if (( $# == 1 )); then
+    #     config_name="${1}"
+    #     shift
+    # fi
+    
+    case $# in
+        2)
+            workspace_name="${1}"
+            echo.dbg "case 2: workspace_name=$workspace_name"
+            shift
+            ;&
+        1)
+            config_name="${1}"
+            echo.dbg "case 1: config_name=$config_name"
+            shift
+            ;&
+        0)
+            if [ -z "${workspace_name}" ]; then
+                workspace_name="$(dedop_workspace_current)"
+            fi
+            if [ -z "${config_name}" ]; then
+                config_name="$(dedop_config_current)"
+            fi
+            echo.dbg "case 0: workspace_name=$workspace_name"
+            echo.dbg "case 0: config_name=$config_name"
+            ;;
+        *)
+            echo " - Wrong number of args ($# instead of 0, 1 or 2)"' !' 1>&2
+            return 1
+            ;;
+    esac
+
+    echo ${DEDOP_HOME}/workspaces/"${workspace_name}"/configs/"${config_name}"
+}
+export -f dedop_config_path
+
+
+# Get the list of input filepaths.
+#
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_inputs_list() {
+    workspace_path="$(dedop_workspace_path "${@}")"
+    ls "${workspace_path}"/inputs/${CS2_PATTERN}
+}
+export -f dedop_inputs_list
+
+
+# Interpolate possible output L1BS and L1B filenames, not that these
+# are filenames only and not filepaths, the dirname are ignored!
+# Also, the output of this function has nothing to do with the actual
+# exstence of the output files on the disk!
+#
+# Usage:
+#   dedop_output_filenames [ -s ] <file.nc> <config_name>
+# 
+# What it does:
+# 
+# Starting from a L1A filename, e.g.:
+# 
+#  - L1A: [inputs/]CS_LTA__SIR1SAR_FR_20140215T115853_20140215T120106_C001.DBL.nc
+#
+# Print the name of the resulting output file(s) when running =dedop run=:
+#
+#  - L1B:  L1B_CS_LTA__SIR1SAR_FR_20140215T115853_20140215T120106_C001.DBL_ddp_conf_01.nc
+#
+# if '-s' option is NOT passed:
+# 
+#  - L1BS: L1BS_CS_LTA__SIR1SAR_FR_20140215T115853_20140215T120106_C001.DBL_ddp_conf_01.nc
+#
+# Options:
+# 
+# -s: skip L1BS output filename, must be passed before any other arg.
+#
+# Args:
+# 
+# 1: ncfile, a filename or a filepath of a L1A netCDF file, terminated
+#    by ".nc" extension.
+#
+# 2: dedop's config_name.
+# 
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_output_filenames() {
+    flag_l1bs=/bin/true
+    if [[ "${1}" == "-s" ]]; then
+        flag_l1bs=/bin/false
+        shift
+    fi
+    if (( $# != 2 )); then
+        echo " - Wrong arg number: got $# instead of 2 (options excluded)." 1>&2
+        return 1
+    fi
+    ncfile="${1}"
+    config_name="${2}"
+    bsn="$(basename "${ncfile}" .nc)"
+    output_l1b_suffix="${bsn}"_"${config_name}".nc
+    ncfile_output_l1b=L1B_"${output_l1b_suffix}"
+    echo "${ncfile_output_l1b}"
+    if ${flag_l1bs}; then
+        ncfile_output_l1bs=L1BS_"${output_l1b_suffix}"
+        echo "${ncfile_output_l1bs}"
+    fi
+}
+export -f dedop_output_filenames
+
+
+# Test the existence of possible output files.
+# 
+# Args:
+# 
+# 1: workspace_name.
+# 
+# 2: optional -s, for dedop_output_filenames().
+# 
+# 3: ncfile, a filename or a filepath of a L1A netCDF file, terminated
+#    by ".nc" extension.
+# 
+# 4: dedop's config_name.
+# 
+# Return: 0 if no output file exist, the number of existing files
+#         otherwise.
+# 
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function dedop_output_files_exist() {
+    workspace_name="${1}"
+    options=""
+    if [[ "${2}" == '-s' ]]; then
+        options="${2}"
+        shift
+    fi
+    ncfile="${2}"
+    config_name="${3}"
+
+    let absent_files=0
+    config_path=$(dedop_config_path ${workspace_name} ${config_name})
+    for output_filename in $(dedop_output_filenames ${options} "${ncfile}" "${config_name}"); do
+        output_filepath="${config_path}"/outputs/"${output_filename}"
+        # echo "${output_filepath}" 1>&2
+
+        # test file existence and is non-empty:
+        if [ ! -s "${output_filepath}" ]; then
+            let absent_files+=1
+        fi
+    done
+    return ${absent_files}
+}
+export -f dedop_output_files_exist
+
+
+# Return the number of running DeDop instances ("dedop run ..."
+# command).
+function dedop_nb_running_instances() {
+    # TODO:2017-10-14: make this restricted to subprocesses of the
+    # caller, otherwise, we may kill other =dedop run= processes of
+    # the same user!
+    pgrep -f "dedop run" | wc -l
+}
+export -f dedop_nb_running_instances
+
+
+# Kill (-9) processes that have been running for too long, i.e., more
+# than JOBS_DURATION_MAX seconds.
+# 
+# Arg 1: the PID of the parent process of the =dedop run ...=
+# processes
+#
+# Return: the number of killed process(es), hence returns 0 if not any
+#         process has been killed.
+# 
+# Nicolas Bercher
+# nbercher@along-track.com
+# Since 2017-10-11.
+# 
+function kill_duration() {
+    let nb_killed=0
+    KILL_SIG="-9"
+    if (( $# > 0 )); then
+        parent="-P ${1}"
+    fi
+    for pid in $(pgrep ${parent} -f "dedop run "); do
+        pid_duration="$(ps -o etimes= -p $pid | sed "s;[ ]\+;;g")"
+        if (( ${pid_duration} > ${JOBS_DURATION_MAX} )); then
+            echo " - Killing (${KILL_SIG}) process ${pid} which has been running for ${pid_duration} seconds (exceeding the limit of ${JOBS_DURATION_MAX} seconds)." 1>&2
+            if kill ${KILL_SIG} ${pid}; then
+                let nb_killed+=1
+            fi
+        fi
+    done
+    return ${nb_killed}
+}
+export -f kill_duration

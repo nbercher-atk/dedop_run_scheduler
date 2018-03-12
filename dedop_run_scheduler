@@ -1,0 +1,315 @@
+#! /bin/bash
+# 
+# dedop_run_scheduler - Run DeDop using an automated job scheduler.
+# 
+# Do better than =dedop run= can do on its own:
+# 
+# - Run one dedop job per input ncfile, and several jobs in parallel.
+# 
+# - Automate the scheduling of parallel dedop jobs up to a limit
+#   defined by the user OR computed from the number of logical CPUs of
+#   the running machine.  Run a new job each time another one
+#   terminates, until no more files are to be processed.
+# 
+# - Automatically kill dedop jobs that have been running for too long
+#   (workaround an infinte loop bug in dedop).
+# 
+# - Optionally ignore the processing if output file(s) already
+#   existing, honouring =dedop run= '-s' option.
+# 
+# - TODO:2017-10-11: Skip inputs ncfiles for which output file(s)
+#   already exist (TODO: take into account for the -s flag).
+# 
+# Usage :
+#     dedop_run_scheduler  # run dedop on the current workspace/configuration.
+# 
+#     dedop_run_scheduler [ <dedop_run_options> ] [ <options> ]
+# 
+#     NICE=<NICE_VALUE> dedop_run_scheduler [ ... ]
+# 
+# Options to be passed to =dedop run= (<dedop_run_options>):
+# 
+# -h: Print =dedop run= help and exit.
+# 
+# -s: Skip generation of L1B-S files.
+# 
+# -c <conf_name>, -w <workspace_name>: [NOT YET IMPLEMENTED] Use
+#     alternate configuration (-c) or alternate workspace (-w).
+# 
+# Deactivated <dedop_run_options>:
+# 
+# -q: This is enabled by default, can't be deactivated (so that we
+#     don't have progress reports in log files!).
+# 
+# Unsupported <dedop_run_options>: -i, -o, -a.
+# 
+# Options for dedop_run_scheduler itself:
+# 
+# -j <J>: The number of jobs to be run in parallel.  If J is not set,
+#     and given N logical CPUs of the running machine, automatically
+#     allocate J=N-1 jobs when N>2 or J=N otherwise (with a nice value
+#     of 10 in this case).
+# 
+# -n <NICE_VALUE>: Apply NICE_VALUE to the =dedop run= instances, this
+#     can also be done like this:
+# 
+#     NICE=NICE_VALUE dedop_run_scheduler [ ... ]
+# 
+#     Note: The -n option takes precedence over the external NICE
+#           environment variable.
+# 
+# -f: Force the reprocessing of any existing output file.
+# 
+# Depends on : libdedop, dedop, basename, echo, cat, /proc/cpuinfo,
+#              grep, wc, read, printf, false, true, pgrep, date,
+#              sleep.
+# 
+# See also : dedop, libdedop
+# 
+# History : 
+#  - 2017-10-11: initial version.
+# 
+# Nicolas Bercher, 2017-10-11.
+# nbercher@along-track.com
+# 
+# This script is distributed under the terms of the GPL v2 license.
+# 
+
+source libdedop
+
+## Define some constants:
+SELF="$(basename ${0})"
+
+# Config's log, for all batches run for it:
+LOG="${SELF}".log
+
+# Pauses durations for the job scheduler:
+SLEEP_JOBS=10
+SLEEP_WATCH=10
+
+## Parse arguments:
+flag_force_process=/bin/false
+dedop_run_options=""
+while (( $# > 0 )); do
+    case "${1}" in
+        # =dedop run= optins:
+        -h)
+            dedop run -h
+            shift
+            exit 0
+            ;;
+        -s)
+            dedop_run_options="${dedop_options} ${1}"
+            shift
+            ;;
+        -w|-c)
+            echo " - =dedop run= option '${1}' is not YET supported, skipping." 1>&2
+            shift
+            if [[ ! "${1}" =~ ^- ]]; then
+                shift
+            fi
+            ;;
+        -q)
+            echo " - =dedop run= option '${1}' is already activated, skipping." 1>&2
+            shift
+            ;;
+        -o|-i)
+            echo " - =dedop run= option '${1}' is not supported, skipping." 1>&2
+            shift
+            if [[ ! "${1}" =~ ^\- ]]; then
+                shift
+            fi
+            ;;
+        -a)
+            echo " - =dedop run= option '${1}' is not supported, skipping." 1>&2
+            shift
+            ;;
+        # dedop_run_scheduler options:
+        -j)
+            NB_JOBS=${2}
+            shift 2
+            ;;
+        -n)
+            NICE=${2}
+            shift 2
+            ;;
+        -f)
+            flag_force_process=/bin/true
+            shift
+            ;;
+        # others:
+        *)
+            echo " - Unknow option '${1}', skipping." 1>&2
+            shift
+            ;;
+    esac
+done
+
+## Verifications:
+if ! which dedop &>/dev/null; then
+    echo " - =dedop= command is not in your PATH, check your environment (e.g., ~/.bashrc, etc.)." 1>&2
+    exit 1
+fi
+
+# Check there are no other dedop_run_scheduler running for the current
+# user:
+if pgrep -f -u "${USER}" "^${SELF}" &>/dev/null; then
+    echo -e " - Another instance of '${SELF}' is already running.\n   I can't run more than once for a single user, sorry." 1>&2
+    exit 1
+fi
+
+## Actual script start:
+
+# Retrieve the current workspace & config names:
+workspace_name="$(dedop_workspace_current)"
+config_name="$(dedop_config_current)"
+config_path="$(dedop_config_path "${workspace_name}" "${config_name}")"
+
+# Check dedop workspace and configuration:
+for name in workspace_name config_name; do
+    if [ -z "${!name}" ]; then
+        echo " - Variable ${name} is empty, please check your dedop workspace and configuration." 1>&2
+        exit 1
+    fi
+done
+if [ ! -d "${config_path}" ]; then
+    echo " - Path to the configuration directory does not exist ('${config_path}')." 1>&2
+    exit 1
+fi
+echo " + Running DeDop for workspace '${workspace_name}' / configuration '${config_name}'." 1>&2
+
+# mkdir for the job log files:
+mkdir -p "${config_path}"/"${SELF}"_log
+
+# Number of jobs to be run in parallel:
+nb_cpu="$(cat /proc/cpuinfo | grep ^processor | wc -l)"
+AUTO_NICE=0
+if [ -z "${NB_JOBS}" ]; then
+    # Given N logical CPUs, automatically allocate:
+    # - N-1/nice=0 jobs to DeDop when there are more than 2 logical
+    #   CPUs,
+    # - N/nice=10 jobs to DeDopotherwise, but be nicer also.
+    if (( ${nb_cpu} > 2 )); then
+        NB_JOBS=$(( ${nb_cpu} - 1 ))
+    else
+        NB_JOBS=${nb_cpu}
+        AUTO_NICE=10
+    fi
+fi
+echo " + Running DeDop using up to ${NB_JOBS} jobs (there are ${nb_cpu} logical CPUs)." 1>&2
+
+# Nice value to be used:
+if [ -z "${NICE}" ]; then
+    NICE=${AUTO_NICE}
+fi
+
+
+# Misc messages:
+if ${flag_force_process}; then
+    echo " + Running DeDop with '-f' option to force the reprocessing of all of the input files." 1>&2
+fi
+
+## Prepare/init stuff for the main loop:
+let nc_file_num=1
+nb_files="$(dedop_inputs_list | wc -l)"
+batch_date="$(date +"%Y-%m-%dT%H.%M.%S")"
+
+# Kill all children of this script when it terminates:
+#
+# See:
+# https://stackoverflow.com/questions/360201/how-do-i-kill-background-processes-jobs-when-my-shell-script-exits
+# 
+trap '
+    jobs_list="$(jobs -p)"
+    [ -n "${jobs_list}" ] && kill ${jobs_list}
+' EXIT
+
+# Run, in the background, a killer of the =dedop run= processes which
+# seem to got stuck for too long:
+(
+    # TODO:2017-10-13: How to pgrep/track processes list that are
+    # sub[sub...]processes of this script?  Cf. ps, pstree, pgrep,
+    # bash' jobs, etc.
+    # 
+    # TODO:2017-10-13: Ensure this stops when this script exists (for
+    # whatever reason/signal it receives) or when there will be no
+    # more =dedop run= processes son of this script!
+    while true; do
+        # Note: Passing the value of $$ to kill_duration does not work
+        # with =kill -P= since the =dedop run= commands are not direct
+        # children of this process but children of 3
+        # dedop_run_scheduler parent processes.
+        #
+        # Kill processes which seem to got stuck:
+        if ! kill_duration; then
+            # TODO:2017-10-11: find a way to retreive filepath of
+            # input ncfiles that make dedop to enter an infinite loop,
+            # log these filepath to a new log file:
+            true # log here
+        fi
+        sleep ${SLEEP_JOBS}
+    done
+) &
+
+# Main loop on dedop workspace's input files:
+# 
+# TODO/Note: In order to not reprocess existing output files, we could
+# have write a filter, to be insterted in between =dedop_inputs_list=
+# and =while read ncfile=, not printing to stdout the L1A filenpath
+# for which:
+# 
+# 1) -s is enabled: L1B exists
+# 
+# 2) -s is not enabled: L1B and L1BS exist
+# 
+dedop_inputs_list | while read ncfile; do
+    ncfile_bsn="$(basename "${ncfile}")"
+
+    # Check if need to process the input file:
+    if ! ${flag_force_process} && \
+            $(dedop_output_files_exist \
+                  ${workspace_name} ${dedop_run_options} ${ncfile_bsn} ${config_name}
+            ); then
+        printf " + ncfile %03d/%03d: skipping since L1B[S] file(s) already exist(s):\n   '%s'\n"  ${nc_file_num} ${nb_files} ${ncfile} 1>&2
+        continue
+    else
+        printf " + ncfile %03d/%03d to be processed: '${ncfile}'\n" ${nc_file_num} ${nb_files} 1>&2
+    fi
+
+    # Jobs scheduling loop:
+    while /bin/true; do
+        let cur_nb_dedop_instances="$(dedop_nb_running_instances)"
+        if (( ${cur_nb_dedop_instances} < ${NB_JOBS} )); then
+
+            # The dedop command to be run:
+            dedop_command="nice -n ${NICE} dedop run ${dedop_run_options} -q -w \"${workspace_name}\" -c \"${config_name}\" -i \"${ncfile}\""
+
+            # Name + init the job's/ncfile log:
+            job_date="$(date +"%Y-%m-%dT%H.%M.%S")"
+            job_log="${config_path}"/"${SELF}"_log/"${job_date}"_"${ncfile_bsn}".log
+            echo -e "\nBATCH ${batch_date} - This is the output of command =${dedop_command}=" >>"${job_log}"
+
+            # Run dedop, log its activity into a job's log:
+            eval ${dedop_command} &>>"${job_log}" &
+            dedop_pid=$!
+            echo "  --> New job run (PID: ${dedop_pid})" 1>&2
+
+            # Record into the config's log file:
+            printf "%03d/%03d\t${job_date}\t${dedop_pid}\t${ncfile}\n" ${nc_file_num} ${nb_files} >>${config_path}/${LOG}
+            let nc_file_num+=1
+            break
+        else
+            printf " + ncfile %03d/%03d is awaiting for a freed logical CPU...\n   (${cur_nb_dedop_instances} jobs are running, no more free jobs to be allocated: waiting jobs to terminate)\n" ${nc_file_num} ${nb_files} 1>&2
+            sleep ${SLEEP_JOBS}
+        fi
+    done
+done
+
+# Continue to monitor the remaining running =dedop run= commands:
+while (( $(dedop_nb_running_instances) > 0 )); do
+    watch_date="$(date +"%Y-%m-%dT%H.%M.%S")"
+    echo " + ${watch_date}: $(dedop_nb_running_instances) jobs are running: no more file(s) to be awainting.  Waiting for remaining jobs to terminate." 1>&2
+    sleep ${SLEEP_WATCH}
+done
+
+echo " + All done." 1>&2
