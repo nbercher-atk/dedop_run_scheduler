@@ -23,8 +23,8 @@ What can do dedop_run_scheduler:
    the running machine.  Run a new job each time another one
    terminates, until no more files are to be processed.
 
- - By default, run on the default user's workspace input files, using
-   the default workspace's configuration.
+ - By default, run on the "current" user's workspace input files,
+   using the "current" workspace's configuration.
 
  - Optionally ignore the processing if output file(s) already
    existing, honouring =dedop run= '-s' option.
@@ -64,8 +64,8 @@ text in the script.
 
 ## Usage examples
 
- 1. Run on the default user's workspace input files, using the default
-    workspace's configuration:
+ 1. Run on the "current" user's workspace input files, using the
+    "current" workspace's configuration:
 
     $ dedop_run_scheduler
 
