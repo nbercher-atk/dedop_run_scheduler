@@ -44,9 +44,9 @@ fi
 
 
 ## Nasty hardcoded things:
-# TODO:2017-10-11: hardcoded value!  This is OK until we do not
-# process something else than CryoSat-2 data:
-NC_FILES_PATTERN='CS_*.DBL.nc'
+# Still decent enough to deal with ESA SAR Altimetry products to be
+# processed by DeDop ('CS2_', 'S3A_', 'S3B_'):
+NC_FILES_PATTERN='[A-Z][A-Z0-9][A-Z0-9]_*.nc'
 JOBS_DURATION_MAX=900 # in seconds (900sec = 15min)
 
 
