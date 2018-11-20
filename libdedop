@@ -44,8 +44,8 @@ fi
 
 
 ## Nasty hardcoded things:
-# TODO:2017-10-11: hardcoded value!  This is OK until we do process
-# something else than CryoSat-2 data:
+# TODO:2017-10-11: hardcoded value!  This is OK until we do not
+# process something else than CryoSat-2 data:
 CS2_PATTERN='CS_*.DBL.nc'
 JOBS_DURATION_MAX=900 # in seconds (900sec = 15min)
 
