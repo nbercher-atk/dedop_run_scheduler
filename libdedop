@@ -46,7 +46,7 @@ fi
 ## Nasty hardcoded things:
 # TODO:2017-10-11: hardcoded value!  This is OK until we do not
 # process something else than CryoSat-2 data:
-CS2_PATTERN='CS_*.DBL.nc'
+NC_FILES_PATTERN='CS_*.DBL.nc'
 JOBS_DURATION_MAX=900 # in seconds (900sec = 15min)
 
 
@@ -169,7 +169,7 @@ export -f dedop_config_path
 # 
 function dedop_inputs_list() {
     workspace_path="$(dedop_workspace_path "${@}")"
-    ls "${workspace_path}"/inputs/${CS2_PATTERN}
+    ls "${workspace_path}"/inputs/${NC_FILES_PATTERN}
 }
 export -f dedop_inputs_list
 
