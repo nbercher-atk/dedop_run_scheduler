@@ -21,15 +21,19 @@
 #   already exist (TODO: take into account for the -s flag).
 # 
 # Usage :
-#     dedop_run_scheduler  # run dedop on the current workspace/configuration.
+#     dedop_run_scheduler    # Run dedop on the current workspace/configuration.
+# 
+#     dedop_run_scheduler -h # Print help.
 # 
 #     dedop_run_scheduler [ <dedop_run_options> ] [ <options> ]
 # 
 #     NICE=<NICE_VALUE> dedop_run_scheduler [ ... ]
 # 
-# Options to be passed to =dedop run= (<dedop_run_options>):
+# Options :
 # 
-# -h: Print =dedop run= help and exit.
+# -h: Print this help.
+# 
+# Options to be passed to =dedop run= (<dedop_run_options>) :
 # 
 # -s: Skip generation of L1B-S files.
 # 
@@ -62,11 +66,12 @@
 # 
 # Depends on : libdedop, dedop, basename, echo, cat, /proc/cpuinfo,
 #              grep, wc, read, printf, false, true, pgrep, date,
-#              sleep.
+#              sleep, awk, sed.
 # 
 # See also : dedop, libdedop
 # 
 # History : 
+#  - 2019-05-06: change option -h meaning.
 #  - 2017-10-11: initial version.
 # 
 # Nicolas Bercher, 2017-10-11.
@@ -92,12 +97,13 @@ flag_force_process=/bin/false
 dedop_run_options=""
 while (( $# > 0 )); do
     case "${1}" in
-        # =dedop run= optins:
+        # =dedop_run_scheduler= options:
         -h)
-            dedop run -h
+            awk 'NR>1 {'print'} ! /^#/ { exit 0 }' < "${0}" | sed "s;^# ;;"
             shift
             exit 0
             ;;
+        # =dedop run= options:
         -s)
             dedop_run_options="${dedop_options} ${1}"
             shift
