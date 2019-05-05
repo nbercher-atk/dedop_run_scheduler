@@ -1,6 +1,7 @@
 # dedop_run_scheduler
 
-DeDop automated job scheduler written in bash
+DeDop automated job scheduler written in bash dedicated to [DeDop
+Core](https://github.com/DeDop/dedop-core)
 
 DeDop is a User Configurable Tool for Processing Delay Doppler
 Altimeter Data.  Please visit this page for more details:
@@ -16,7 +17,8 @@ The dedop_run_scheduler script is intended to work with
 
 What can do dedop_run_scheduler:
 
- - Run one dedop job per input ncfile and several jobs in parallel.
+ - Run one dedop job per input netCDF file and several jobs in
+   parallel.
 
  - Automate the scheduling of parallel dedop jobs up to a limit
    defined by the user OR computed from the number of logical CPUs of
@@ -32,22 +34,21 @@ What can do dedop_run_scheduler:
  - Automatically kill dedop jobs that have been running for too long
    (workaround an infinite loop bug in dedop-core versions <=1.1.0).
 
-So far, only [bundled package of dedop-core
-v1.3.0](https://github.com/DeDop/dedop-core/releases/download/v1.3.0/DeDop-core-1.3.0-Linux-x86_64.sh)
-has been tested, but it should work with all versions of DeDop.
-
-The script should be mature enough to be run for production purposes.
+Since dedop_run_scheduler uses the CLI interface of DeDop Core, all
+versions are normally supported (including [bundled package of
+dedop-core
+v1.5.0](https://github.com/DeDop/dedop-core/releases/download/v1.5.0/DeDop-core-1.5.0-Linux-x86_64.sh)).
 
 
 <a id="org1782477"></a>
 
 ## Installation
 
-1.  Clone this repository in some folder on your local machine.
+ 1. Clone this repository in some folder on your local machine.
 
-2.  Add this folder to your PATH environment variable.
+ 2. Add this folder to your PATH environment variable.
 
-3. Ensure that the following files have the executable bit set:
+ 3. Ensure that the following files have the executable bit set:
 
     dedop_run_scheduler
     libdedop
@@ -59,20 +60,22 @@ The script should be mature enough to be run for production purposes.
 ## Documentation
 
 The documentation of the dedop_run_scheduler is embed as commented
-text in the script.
+text in the script itself.  It can be printed from the shell command
+line:
 
+`dedop_run_scheduler -h`
 
 ## Usage examples
 
  1. Run on the "current" user's workspace input files, using the
     "current" workspace's configuration:
 
-    $ dedop_run_scheduler
+    `dedop_run_scheduler`
 
 
 ## Authors
 
-Nicolas Bercher, Along-Track SAS, 2017.
+Nicolas Bercher, Along-Track SAS, 2019.
 
 
 ## Licence
